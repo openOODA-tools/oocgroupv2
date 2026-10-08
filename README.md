@@ -54,16 +54,23 @@ oocgroupv2-uninstall
 ## 2. CLI Usage
 
 ```
-usage: oocgroupv2 [options] [ARGUMENTS]...
+usage: oocgroupv2 [options] [PATH]
 
 Visualizes the active cgroup v2 slice hierarchy and resource shares.
 
 Options:
+  -p, --path <PATH>    root cgroup path (default: /sys/fs/cgroup)
+  -s, --slice <NAME>   filter hierarchy to specific slice (e.g. system, user)
+  -d, --depth <N>      maximum traversal depth (default: 3)
+      --shares         display sibling CPU shares and weight distribution
+      --psi            display Pressure Stall Information (PSI) panel
+      --events         display OOM kill counts and population events
+      --procs          display task counts for cgroup nodes
+      --summary        display summary of slices, active controllers, and tasks
+      --demo           run against synthetic cgroup v2 hierarchy
+      --json           output formatted as JSON Lines
   -h, --help           display this help and exit
   -v, --version        output version information and exit
-      --json           output formatted as JSON Lines
-      --color <WHEN>   colorize output: auto, always, never [default: auto]
-      --theme <NAME>   override active oote palette
       --mcp            run as Model Context Protocol stdio server
 ```
 
@@ -84,6 +91,19 @@ When invoked with `--mcp`, `oocgroupv2` runs a JSON-RPC 2.0 stdio server providi
 ```bash
 oocgroupv2 --mcp
 ```
+
+### Available Tools
+
+* **`cgroupv2_tree`**: Visualizes active cgroup v2 slice hierarchy and resource limits.
+  * Parameters: `path` (string, optional), `slice` (string, optional)
+* **`cgroupv2_inspect`**: Inspects specific cgroup v2 node (controllers, procs, memory, CPU quota).
+  * Parameters: `path` (string, required)
+* **`cgroupv2_psi`**: Reads Pressure Stall Information (PSI) for CPU, memory, and IO.
+  * Parameters: `resource` (string, optional: "all", "cpu", "memory", "io")
+* **`cgroupv2_controllers`**: Audits controller delegation and subtree_control down the hierarchy.
+  * Parameters: `path` (string, optional)
+* **`cgroupv2_events`**: Inspects memory OOM kills and population state.
+  * Parameters: `path` (string, optional)
 
 ---
 

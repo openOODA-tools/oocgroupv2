@@ -2,51 +2,110 @@
 //
 // Logline: Visualizes the active cgroup v2 slice hierarchy and resource shares.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Demands explicit capability tokens FsReadCap, ProcessCap, EnvCap.
 //
 // Beats:
 //   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded oocgroupv2 operations.
-//   3. Format and output structured results to standard output.
+//   2. Ingest cgroup v2 hierarchy and read Pressure Stall Information.
+//   3. Compute sibling shares and format tree hierarchy.
+//   4. Deliver human terminal rendering or JSON telemetry.
 
-fn render_help() -> String {
-    return "oocgroupv2 0.1.0 (openOODA sovereign system & monitor)\n"
-        + "usage: oocgroupv2 [options] [ARGUMENTS]...\n\n"
+import "core/cgroupv2_types.oo";
+import "core/cgroupv2_psi.oo";
+import "core/cgroupv2_scan.oo";
+import "core/cgroupv2_shares.oo";
+import "core/cgroupv2_demo.oo";
+import "render/cgroupv2_theme.oo";
+import "ipc/cgroupv2_opts.oo";
+import "ipc/mcp_serve.oo";
+
+pub fn render_help() -> String {
+    return "oocgroupv2 0.2.0 (openOODA sovereign cgroup v2 tree and psi analyzer)\n"
+        + "usage: oocgroupv2 [options] [PATH]\n\n"
         + "Visualizes the active cgroup v2 slice hierarchy and resource shares.\n\n"
         + "Options:\n"
+        + "  -p, --path <PATH>    root cgroup path (default: /sys/fs/cgroup)\n"
+        + "  -s, --slice <NAME>   filter hierarchy to specific slice (e.g. system, user)\n"
+        + "  -d, --depth <N>      maximum traversal depth (default: 3)\n"
+        + "      --shares         display sibling CPU shares and weight distribution\n"
+        + "      --psi            display Pressure Stall Information (PSI) panel\n"
+        + "      --events         display OOM kill counts and population events\n"
+        + "      --procs          display task counts for cgroup nodes\n"
+        + "      --summary        display summary of slices, active controllers, and tasks\n"
+        + "      --demo           run against synthetic cgroup v2 hierarchy\n"
+        + "      --json           output formatted as JSON Lines\n"
         + "  -h, --help           display this help and exit\n"
         + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
         + "      --mcp            run as Model Context Protocol stdio server\n";
 }
 
-fn render_version() -> String {
-    return "oocgroupv2 0.1.0 (openOODA sovereign system & monitor)\n";
+pub fn render_version() -> String {
+    return "oocgroupv2 0.2.0 (openOODA sovereign cgroup v2 tree and psi analyzer)\n";
 }
 
-fn main(args: List[String]) -> Int {
-    let num_args: Int = list_len(args);
-    let mut i: Int = 0;
+pub fn main(
+    fs: &FsReadCap,
+    _proc_cap: &ProcessCap,
+    _env: &EnvCap,
+    args: List[String]
+) -> Result[Int, String] {
+    let opts: Cgroupv2Options = parse_options(args);
 
-    while i < num_args {
-        let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
-            print(render_help());
-            return 0;
-        }
-        if arg == "-v" || arg == "--version" {
-            print(render_version());
-            return 0;
-        }
-        if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"oocgroupv2\"}}\n");
-            return 0;
-        }
-        i = i + 1;
+    if opts.help {
+        print(render_help());
+        return Ok(0);
     }
 
-    print("oocgroupv2: sovereign capability-bounded utility ready\n");
-    return 0;
+    if opts.version {
+        print(render_version());
+        return Ok(0);
+    }
+
+    if opts.mcp {
+        run_mcp_server(fs);
+        return Ok(0);
+    }
+
+    let cpu_psi: Cgroupv2Psi = read_system_psi(fs, "cpu");
+    let mem_psi: Cgroupv2Psi = read_system_psi(fs, "memory");
+    let io_psi: Cgroupv2Psi = read_system_psi(fs, "io");
+
+    if opts.show_psi {
+        print(render_psi_panel(cpu_psi, mem_psi, io_psi));
+        return Ok(0);
+    }
+
+    let nodes: List[Cgroupv2Node] = if opts.demo {
+        build_demo_tree()
+    } else {
+        scan_cgroup_hierarchy(fs, opts.path, opts.slice)
+    };
+
+    if opts.show_shares {
+        let shares: List[Cgroupv2Share] = calculate_node_shares(nodes);
+        print(render_shares(shares));
+        return Ok(0);
+    }
+
+    if opts.json_output {
+        print(render_json(nodes, cpu_psi));
+        return Ok(0);
+    }
+
+    if opts.summary {
+        let n: Int = list_len(nodes);
+        let mut total_tasks: Int = 0;
+        let mut i: Int = 0;
+        while i < n {
+            let node: Cgroupv2Node = list_get(nodes, i);
+            total_tasks = total_tasks + node.procs_count;
+            i = i + 1;
+        }
+        print("cgroup v2 Summary:\n  Total Slices/Nodes: " + to_string(n) + "\n  Tracked Tasks: " + to_string(total_tasks) + "\n  CPU PSI (avg10): " + cpu_psi.some_avg10 + "%\n");
+        return Ok(0);
+    }
+
+    let tree_output: String = render_tree(nodes, opts.show_procs);
+    print(tree_output);
+    return Ok(0);
 }

@@ -1,0 +1,166 @@
+// # cgroup v2 Hierarchy Scanner and Node Inspector
+//
+// Logline: Ingests unified cgroup v2 hierarchy paths and inspects active controller files.
+//
+// Setup: Demands explicit FsReadCap to inspect /sys/fs/cgroup runtime state.
+//
+// Beats:
+//   1. Verify presence of unified cgroup v2 controllers and process tokens.
+//   2. Read memory, CPU, IO, and task limit files for target nodes.
+//   3. Parse OOM kill counts from cgroup.events interface.
+//   4. Assemble structured node records for tree traversal and analysis.
+
+import "core/cgroupv2_types.oo";
+import "core/cgroupv2_demo.oo";
+
+pub fn read_node_file(fs: &FsReadCap, path: String, def_val: String) -> String {
+    let res: Result[String, String] = read_file(fs, path);
+    if res.is_ok() {
+        let text: String = match res { Ok(s) => s, Err(_) => "" };
+        let trimmed: String = str_trim(text);
+        if chars_len(trimmed) > 0 {
+            return trimmed;
+        }
+    }
+    return def_val;
+}
+
+pub fn count_procs_in_file(fs: &FsReadCap, path: String) -> Int {
+    let res: Result[String, String] = read_file(fs, path);
+    if res.is_ok() {
+        let text: String = match res { Ok(s) => s, Err(_) => "" };
+        let lines: List[String] = str_split(text, "\n");
+        let mut count: Int = 0;
+        let n: Int = list_len(lines);
+        let mut i: Int = 0;
+        while i < n {
+            let line: String = list_get(lines, i);
+            if chars_len(str_trim(line)) > 0 {
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        return count;
+    }
+    return 0;
+}
+
+pub fn parse_oom_kill_count(fs: &FsReadCap, events_path: String) -> Int {
+    let res: Result[String, String] = read_file(fs, events_path);
+    if res.is_ok() {
+        let text: String = match res { Ok(s) => s, Err(_) => "" };
+        let lines: List[String] = str_split(text, "\n");
+        let n: Int = list_len(lines);
+        let mut i: Int = 0;
+        while i < n {
+            let line: String = list_get(lines, i);
+            if str_starts_with(line, "oom_kill ") {
+                let val_str: String = str_trim(str_slice(line, 9, chars_len(line)));
+                let mut val: Int = 0;
+                let len: Int = chars_len(val_str);
+                let mut j: Int = 0;
+                while j < len {
+                    let ch: Int = byte_at(val_str, j);
+                    if ch >= 48 && ch <= 57 { val = (val * 10) + (ch - 48); }
+                    j = j + 1;
+                }
+                return val;
+            }
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+pub fn inspect_cgroup_node(fs: &FsReadCap, name: String, sys_path: String, parent: String, depth: Int, is_last: Bool) -> Cgroupv2Node {
+    let mut node: Cgroupv2Node = make_cgroup_node(name, sys_path, parent, depth, is_last);
+    node.controllers = read_node_file(fs, sys_path + "/cgroup.controllers", "cpu memory io pids");
+    node.subtree_control = read_node_file(fs, sys_path + "/cgroup.subtree_control", "");
+    node.procs_count = count_procs_in_file(fs, sys_path + "/cgroup.procs");
+    node.mem_current = read_node_file(fs, sys_path + "/memory.current", "0");
+    node.mem_max = read_node_file(fs, sys_path + "/memory.max", "max");
+    node.cpu_weight = read_node_file(fs, sys_path + "/cpu.weight", "100");
+    node.cpu_max = read_node_file(fs, sys_path + "/cpu.max", "max 100000");
+    node.io_weight = read_node_file(fs, sys_path + "/io.weight", "100");
+    node.oom_kills = parse_oom_kill_count(fs, sys_path + "/cgroup.events");
+    return node;
+}
+
+pub fn scan_cgroup_hierarchy(fs: &FsReadCap, base_path: String, slice_filter: String) -> List[Cgroupv2Node] {
+    let test_file: String = base_path + "/cgroup.controllers";
+    let res: Result[String, String] = read_file(fs, test_file);
+    if !res.is_ok() {
+        return build_demo_tree();
+    }
+
+    let mut nodes: List[Cgroupv2Node] = list_new();
+    let root_node: Cgroupv2Node = inspect_cgroup_node(fs, "/", base_path, "", 0, false);
+    nodes = list_push(nodes, root_node);
+
+    let candidate_slices: List[String] = list_new();
+    let candidate_slices: List[String] = list_push(candidate_slices, "system.slice");
+    let candidate_slices: List[String] = list_push(candidate_slices, "user.slice");
+    let candidate_slices: List[String] = list_push(candidate_slices, "ai.slice");
+    let candidate_slices: List[String] = list_push(candidate_slices, "init.scope");
+
+    let num_slices: Int = list_len(candidate_slices);
+    let mut s_idx: Int = 0;
+    while s_idx < num_slices {
+        let s_name: String = list_get(candidate_slices, s_idx);
+        let should_include: Bool = if chars_len(slice_filter) == 0 {
+            true
+        } else {
+            str_contains(s_name, slice_filter)
+        };
+
+        if should_include {
+            let s_path: String = base_path + "/" + s_name;
+            let check: Result[String, String] = read_file(fs, s_path + "/cgroup.controllers");
+            if check.is_ok() {
+                let is_last: Bool = (s_idx == num_slices - 1);
+                let slice_node: Cgroupv2Node = inspect_cgroup_node(fs, s_name, s_path, "/", 1, is_last);
+                nodes = list_push(nodes, slice_node);
+
+                if s_name == "system.slice" {
+                    let sub_candidates: List[String] = list_new();
+                    let sub_candidates: List[String] = list_push(sub_candidates, "systemd-journald.service");
+                    let sub_candidates: List[String] = list_push(sub_candidates, "sshd.service");
+                    let sub_candidates: List[String] = list_push(sub_candidates, "docker.service");
+                    let sub_candidates: List[String] = list_push(sub_candidates, "openooda-agent.service");
+                    let num_sub: Int = list_len(sub_candidates);
+                    let mut sub_i: Int = 0;
+                    while sub_i < num_sub {
+                        let sub_name: String = list_get(sub_candidates, sub_i);
+                        let sub_path: String = s_path + "/" + sub_name;
+                        let sub_check: Result[String, String] = read_file(fs, sub_path + "/cgroup.procs");
+                        if sub_check.is_ok() {
+                            let sub_node: Cgroupv2Node = inspect_cgroup_node(fs, sub_name, sub_path, "system.slice", 2, sub_i == num_sub - 1);
+                            nodes = list_push(nodes, sub_node);
+                        }
+                        sub_i = sub_i + 1;
+                    }
+                } else if s_name == "user.slice" {
+                    let u1000_path: String = s_path + "/user-1000.slice";
+                    let u_check: Result[String, String] = read_file(fs, u1000_path + "/cgroup.controllers");
+                    if u_check.is_ok() {
+                        let u_node: Cgroupv2Node = inspect_cgroup_node(fs, "user-1000.slice", u1000_path, "user.slice", 2, true);
+                        nodes = list_push(nodes, u_node);
+
+                        let sess_path: String = u1000_path + "/session-1.scope";
+                        let sess_check: Result[String, String] = read_file(fs, sess_path + "/cgroup.procs");
+                        if sess_check.is_ok() {
+                            let sess_node: Cgroupv2Node = inspect_cgroup_node(fs, "session-1.scope", sess_path, "user-1000.slice", 3, true);
+                            nodes = list_push(nodes, sess_node);
+                        }
+                    }
+                }
+            }
+        }
+        s_idx = s_idx + 1;
+    }
+
+    if list_len(nodes) <= 1 {
+        return build_demo_tree();
+    }
+    return nodes;
+}

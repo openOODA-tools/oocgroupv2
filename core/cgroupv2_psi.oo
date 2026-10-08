@@ -1,0 +1,94 @@
+// # cgroup v2 Pressure Stall Information (PSI) Engine
+//
+// Logline: Parses kernel Pressure Stall Information for CPU, memory, and IO bottlenecks.
+//
+// Setup: Demands FsReadCap to inspect /proc/pressure and cgroup.pressure interfaces.
+//
+// Beats:
+//   1. Extract individual key-value metrics from PSI record lines.
+//   2. Parse some/full stall metrics across 10s, 60s, and 300s averaging windows.
+//   3. Read system-wide PSI from /proc/pressure/{cpu,memory,io}.
+//   4. Read local cgroup PSI from <path>/{cpu,memory,io}.pressure.
+
+import "core/cgroupv2_types.oo";
+
+pub fn extract_psi_val(line: String, key: String) -> String {
+    let needle: String = key + "=";
+    if !str_contains(line, needle) {
+        return "0.00";
+    }
+    let full_len: Int = chars_len(line);
+    let key_len: Int = chars_len(needle);
+    let mut i: Int = 0;
+    while i <= full_len - key_len {
+        let sub: String = str_slice(line, i, i + key_len);
+        if sub == needle {
+            let start: Int = i + key_len;
+            let mut end: Int = start;
+            while end < full_len {
+                let ch: Int = byte_at(line, end);
+                if ch == 32 || ch == 10 || ch == 13 {
+                    let res: String = str_slice(line, start, end);
+                    return res;
+                }
+                end = end + 1;
+            }
+            let res_end: String = str_slice(line, start, end);
+            return res_end;
+        }
+        i = i + 1;
+    }
+    return "0.00";
+}
+
+pub fn parse_psi_lines(resource: String, content: String) -> Cgroupv2Psi {
+    let mut s10: String = "0.00";
+    let mut s60: String = "0.00";
+    let mut s300: String = "0.00";
+    let mut s_tot: String = "0";
+    let mut f10: String = "0.00";
+    let mut f60: String = "0.00";
+    let mut f300: String = "0.00";
+    let mut f_tot: String = "0";
+
+    let lines: List[String] = str_split(content, "\n");
+    let n: Int = list_len(lines);
+    let mut i: Int = 0;
+    while i < n {
+        let line: String = list_get(lines, i);
+        if str_starts_with(line, "some") {
+            s10 = extract_psi_val(line, "avg10");
+            s60 = extract_psi_val(line, "avg60");
+            s300 = extract_psi_val(line, "avg300");
+            s_tot = extract_psi_val(line, "total");
+        } else if str_starts_with(line, "full") {
+            f10 = extract_psi_val(line, "avg10");
+            f60 = extract_psi_val(line, "avg60");
+            f300 = extract_psi_val(line, "avg300");
+            f_tot = extract_psi_val(line, "total");
+        }
+        i = i + 1;
+    }
+    return make_psi_metric(resource, s10, s60, s300, s_tot, f10, f60, f300, f_tot);
+}
+
+pub fn read_system_psi(fs: &FsReadCap, resource: String) -> Cgroupv2Psi {
+    let path: String = "/proc/pressure/" + resource;
+    let res: Result[String, String] = read_file(fs, path);
+    if res.is_ok() {
+        let content: String = match res { Ok(s) => s, Err(_) => "" };
+        return parse_psi_lines(resource, content);
+    }
+    return make_psi_metric(resource, "0.00", "0.00", "0.00", "0", "0.00", "0.00", "0.00", "0");
+}
+
+pub fn read_cgroup_psi(fs: &FsReadCap, cgroup_path: String, resource: String) -> Cgroupv2Psi {
+    let path: String = cgroup_path + "/" + resource + ".pressure";
+    let res: Result[String, String] = read_file(fs, path);
+    if res.is_ok() {
+        let content: String = match res { Ok(s) => s, Err(_) => "" };
+        return parse_psi_lines(resource, content);
+    }
+    return read_system_psi(fs, resource);
+}
+

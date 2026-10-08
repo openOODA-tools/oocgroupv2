@@ -1,0 +1,35 @@
+// # cgroup v2 Render Verification Anchor
+//
+// Logline: Invariant verification suite confirming cgroup v2 tree formatting and PSI panels.
+//
+// Setup: Exports render subroutines and executes render integrity predicates.
+//
+// Beats:
+//   1. Verify human byte formatting boundaries (KiB, MiB, GiB).
+//   2. Verify tree node line formatting and indentation.
+//   3. Verify PSI panel table generation.
+//   4. Deliver unified render verification status.
+
+import "render/cgroupv2_theme.oo";
+import "core/cgroupv2_types.oo";
+
+pub fn verify_render_subsystem() -> Bool {
+    let formatted: String = format_bytes("1048576");
+    if formatted != "1 MiB" {
+        return false;
+    }
+
+    let node: Cgroupv2Node = make_cgroup_node("sys.slice", "/sys", "/", 1, true);
+    let line: String = render_tree_node(node, true);
+    if !str_contains(line, "sys.slice") {
+        return false;
+    }
+
+    let psi_item: Cgroupv2Psi = make_psi_metric("cpu", "0.01", "0.02", "0.03", "100", "0.00", "0.00", "0.00", "0");
+    let panel: String = render_psi_panel(psi_item, psi_item, psi_item);
+    if !str_contains(panel, "Pressure Stall Information") {
+        return false;
+    }
+
+    return true;
+}

@@ -1,5 +1,5 @@
 Name:           oocgroupv2
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Visualizes the active cgroup v2 slice hierarchy and resource shares.
 License:        ASL 2.0

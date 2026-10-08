@@ -1,0 +1,103 @@
+// # cgroup v2 Data Types
+//
+// Logline: Data structures representing cgroup v2 tree nodes, PSI metrics, and shares.
+//
+// Setup: Bridges kernel cgroup v2 filesystem records with sovereign presentation layers.
+//
+// Beats:
+//   1. Define Cgroupv2Node record holding slice/group properties and limits.
+//   2. Define Cgroupv2Psi record holding Pressure Stall Information metrics.
+//   3. Define Cgroupv2Share record holding proportional sibling resource weights.
+//   4. Define constructor functions for type-safe record initialization.
+
+pub type Cgroupv2Node = struct {
+    name: String,
+    path: String,
+    parent: String,
+    controllers: String,
+    subtree_control: String,
+    procs_count: Int,
+    mem_current: String,
+    mem_max: String,
+    cpu_weight: String,
+    cpu_max: String,
+    io_weight: String,
+    oom_kills: Int,
+    depth: Int,
+    is_last: Bool
+};
+
+pub type Cgroupv2Psi = struct {
+    resource: String,
+    some_avg10: String,
+    some_avg60: String,
+    some_avg300: String,
+    some_total: String,
+    full_avg10: String,
+    full_avg60: String,
+    full_avg300: String,
+    full_total: String
+};
+
+pub type Cgroupv2Share = struct {
+    name: String,
+    weight: Int,
+    percent_str: String
+};
+
+pub fn make_cgroup_node(
+    name: String,
+    path: String,
+    parent: String,
+    depth: Int,
+    is_last: Bool
+) -> Cgroupv2Node {
+    return Cgroupv2Node {
+        name: name,
+        path: path,
+        parent: parent,
+        controllers: "cpu memory io pids",
+        subtree_control: "cpu memory pids",
+        procs_count: 0,
+        mem_current: "0",
+        mem_max: "max",
+        cpu_weight: "100",
+        cpu_max: "max 100000",
+        io_weight: "100",
+        oom_kills: 0,
+        depth: depth,
+        is_last: is_last
+    };
+}
+
+pub fn make_psi_metric(
+    resource: String,
+    s10: String,
+    s60: String,
+    s300: String,
+    s_tot: String,
+    f10: String,
+    f60: String,
+    f300: String,
+    f_tot: String
+) -> Cgroupv2Psi {
+    return Cgroupv2Psi {
+        resource: resource,
+        some_avg10: s10,
+        some_avg60: s60,
+        some_avg300: s300,
+        some_total: s_tot,
+        full_avg10: f10,
+        full_avg60: f60,
+        full_avg300: f300,
+        full_total: f_tot
+    };
+}
+
+pub fn make_share_item(name: String, weight: Int, pct: String) -> Cgroupv2Share {
+    return Cgroupv2Share {
+        name: name,
+        weight: weight,
+        percent_str: pct
+    };
+}

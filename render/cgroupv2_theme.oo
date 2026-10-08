@@ -1,0 +1,106 @@
+// # cgroup v2 Terminal Renderer and Theming Engine
+//
+// Logline: Formats hierarchical slice trees, PSI pressure panels, and JSON telemetry.
+//
+// Setup: Bridges structured cgroup v2 model records with human and machine outputs.
+//
+// Beats:
+//   1. Format human-readable byte counts and memory boundaries.
+//   2. Render box-drawing hierarchy tree lines with controllers and weight tags.
+//   3. Render Pressure Stall Information (PSI) metrics table.
+//   4. Render sibling weight share distributions and JSON telemetry.
+
+import "core/cgroupv2_types.oo";
+
+pub fn format_bytes(bytes_str: String) -> String {
+    if bytes_str == "max" { return "max"; }
+    let n: Int = chars_len(bytes_str);
+    if n == 0 { return "0 B"; }
+    let mut num: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let ch: Int = byte_at(bytes_str, i);
+        if ch >= 48 && ch <= 57 { num = (num * 10) + (ch - 48); }
+        i = i + 1;
+    }
+    if num >= 1073741824 { return to_string(num / 1073741824) + " GiB"; }
+    if num >= 1048576 { return to_string(num / 1048576) + " MiB"; }
+    if num >= 1024 { return to_string(num / 1024) + " KiB"; }
+    return to_string(num) + " B";
+}
+
+pub fn render_tree_node(node: Cgroupv2Node, show_procs: Bool) -> String {
+    let mut indent: String = "";
+    let mut d: Int = 0;
+    while d < node.depth {
+        indent = indent + "  ";
+        d = d + 1;
+    }
+
+    let branch: String = if node.depth == 0 { "" } else if node.is_last { "└── " } else { "├── " };
+    let mut line: String = indent + branch + node.name;
+
+    line = line + " [mem: " + format_bytes(node.mem_current) + " / " + format_bytes(node.mem_max);
+    line = line + ", cpu.weight: " + node.cpu_weight;
+    if show_procs {
+        line = line + ", tasks: " + to_string(node.procs_count);
+    }
+    if node.oom_kills > 0 {
+        line = line + ", oom_kills: " + to_string(node.oom_kills);
+    }
+    line = line + "]\n";
+    return line;
+}
+
+pub fn render_tree(nodes: List[Cgroupv2Node], show_procs: Bool) -> String {
+    let mut out: String = "cgroup v2 unified hierarchy:\n";
+    let n: Int = list_len(nodes);
+    let mut i: Int = 0;
+    while i < n {
+        let node: Cgroupv2Node = list_get(nodes, i);
+        out = out + render_tree_node(node, show_procs);
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_psi_panel(cpu: Cgroupv2Psi, mem: Cgroupv2Psi, io: Cgroupv2Psi) -> String {
+    let mut out: String = "================================================================================\n";
+    out = out + "               Pressure Stall Information (PSI) Bottleneck Telemetry\n";
+    out = out + "================================================================================\n";
+    out = out + " Resource   Type   avg10    avg60    avg300   total (us)\n";
+    out = out + "--------------------------------------------------------------------------------\n";
+    out = out + " CPU        some   " + cpu.some_avg10 + "%   " + cpu.some_avg60 + "%   " + cpu.some_avg300 + "%   " + cpu.some_total + "\n";
+    out = out + " Memory     some   " + mem.some_avg10 + "%   " + mem.some_avg60 + "%   " + mem.some_avg300 + "%   " + mem.some_total + "\n";
+    out = out + " Memory     full   " + mem.full_avg10 + "%   " + mem.full_avg60 + "%   " + mem.full_avg300 + "%   " + mem.full_total + "\n";
+    out = out + " IO         some   " + io.some_avg10 + "%   " + io.some_avg60 + "%   " + io.some_avg300 + "%   " + io.some_total + "\n";
+    out = out + " IO         full   " + io.full_avg10 + "%   " + io.full_avg60 + "%   " + io.full_avg300 + "%   " + io.full_total + "\n";
+    out = out + "================================================================================\n";
+    return out;
+}
+
+pub fn render_shares(shares: List[Cgroupv2Share]) -> String {
+    let mut out: String = "cgroup v2 sibling CPU shares / weight distribution:\n";
+    let n: Int = list_len(shares);
+    let mut i: Int = 0;
+    while i < n {
+        let s: Cgroupv2Share = list_get(shares, i);
+        out = out + "  * " + s.name + " -> weight: " + to_string(s.weight) + " (" + s.percent_str + ")\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_json(nodes: List[Cgroupv2Node], cpu_psi: Cgroupv2Psi) -> String {
+    let mut out: String = "{\"status\":\"ok\",\"tool\":\"oocgroupv2\",\"psi_cpu_some_avg10\":\"" + cpu_psi.some_avg10 + "\",\"nodes\":[";
+    let n: Int = list_len(nodes);
+    let mut i: Int = 0;
+    while i < n {
+        let node: Cgroupv2Node = list_get(nodes, i);
+        out = out + "{\"name\":\"" + node.name + "\",\"path\":\"" + node.path + "\",\"tasks\":" + to_string(node.procs_count) + ",\"mem_current\":\"" + node.mem_current + "\",\"cpu_weight\":\"" + node.cpu_weight + "\"}";
+        if i < n - 1 { out = out + ","; }
+        i = i + 1;
+    }
+    out = out + "]}\n";
+    return out;
+}

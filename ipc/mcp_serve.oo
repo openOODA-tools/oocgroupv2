@@ -1,0 +1,132 @@
+// # Model Context Protocol (MCP) Server for cgroup v2
+//
+// Logline: JSON-RPC 2.0 stdio server exposing cgroup v2 tree navigation and PSI tools.
+//
+// Setup: Demands FsReadCap to service streaming agent tool invocations over standard input.
+//
+// Beats:
+//   1. Handle MCP initialize handshake with server metadata.
+//   2. Expose tools/list catalogue with five cgroup v2 analysis capabilities.
+//   3. Dispatch tools/call for cgroupv2_tree, inspect, psi, controllers, and events.
+//   4. Format JSON-RPC 2.0 streaming responses.
+
+import "core/cgroupv2_types.oo";
+import "core/cgroupv2_psi.oo";
+import "core/cgroupv2_scan.oo";
+import "render/cgroupv2_theme.oo";
+import "ipc/json_field.oo";
+
+pub fn render_mcp_init(id: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"oocgroupv2\",\"version\":\"0.2.0\"}}}\n";
+}
+
+pub fn render_mcp_tools_list(id: String) -> String {
+    let mut out: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"tools\":[";
+    out = out + "{\"name\":\"cgroupv2_tree\",\"description\":\"Visualizes active cgroup v2 slice hierarchy and resource limits.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"slice\":{\"type\":\"string\"}}}},";
+    out = out + "{\"name\":\"cgroupv2_inspect\",\"description\":\"Inspects specific cgroup v2 node (controllers, procs, memory, CPU quota).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},";
+    out = out + "{\"name\":\"cgroupv2_psi\",\"description\":\"Reads Pressure Stall Information (PSI) for CPU, memory, and IO.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"resource\":{\"type\":\"string\"}}}},";
+    out = out + "{\"name\":\"cgroupv2_controllers\",\"description\":\"Audits controller delegation and subtree_control down the hierarchy.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}},";
+    out = out + "{\"name\":\"cgroupv2_events\",\"description\":\"Inspects memory OOM kills and population state.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}}";
+    out = out + "]}}\n";
+    return out;
+}
+
+pub fn handle_mcp_call(fs: &FsReadCap, id: String, tool_name: String, req: String) -> String {
+    if tool_name == "cgroupv2_tree" {
+        let base_path: String = extract_json_str(req, "path");
+        let p: String = if chars_len(base_path) > 0 { base_path } else { "/sys/fs/cgroup" };
+        let slice: String = extract_json_str(req, "slice");
+        let nodes: List[Cgroupv2Node] = scan_cgroup_hierarchy(fs, p, slice);
+        let rendered: String = render_tree(nodes, true);
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(rendered) + "\"}]}}\n";
+    }
+
+    if tool_name == "cgroupv2_inspect" {
+        let target_path: String = extract_json_str(req, "path");
+        let p: String = if chars_len(target_path) > 0 { target_path } else { "/sys/fs/cgroup" };
+        let node: Cgroupv2Node = inspect_cgroup_node(fs, p, p, "/", 0, true);
+        let mut text: String = "cgroup v2 Node: " + node.name + "\n";
+        text = text + "  Path: " + node.path + "\n";
+        text = text + "  Controllers: " + node.controllers + "\n";
+        text = text + "  Subtree Control: " + node.subtree_control + "\n";
+        text = text + "  Tasks: " + to_string(node.procs_count) + "\n";
+        text = text + "  Memory: " + node.mem_current + " (max: " + node.mem_max + ")\n";
+        text = text + "  CPU Weight: " + node.cpu_weight + " (max: " + node.cpu_max + ")\n";
+        text = text + "  OOM Kills: " + to_string(node.oom_kills) + "\n";
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(text) + "\"}]}}\n";
+    }
+
+    if tool_name == "cgroupv2_psi" {
+        let cpu_psi: Cgroupv2Psi = read_system_psi(fs, "cpu");
+        let mem_psi: Cgroupv2Psi = read_system_psi(fs, "memory");
+        let io_psi: Cgroupv2Psi = read_system_psi(fs, "io");
+        let text: String = render_psi_panel(cpu_psi, mem_psi, io_psi);
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(text) + "\"}]}}\n";
+    }
+
+    if tool_name == "cgroupv2_controllers" {
+        let base_path: String = extract_json_str(req, "path");
+        let p: String = if chars_len(base_path) > 0 { base_path } else { "/sys/fs/cgroup" };
+        let nodes: List[Cgroupv2Node] = scan_cgroup_hierarchy(fs, p, "");
+        let mut text: String = "Controller Delegation Audit:\n";
+        let n: Int = list_len(nodes);
+        let mut i: Int = 0;
+        while i < n {
+            let item: Cgroupv2Node = list_get(nodes, i);
+            text = text + "  * " + item.name + "\n";
+            text = text + "      Available: " + item.controllers + "\n";
+            text = text + "      Delegated to Subtree: " + item.subtree_control + "\n";
+            i = i + 1;
+        }
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(text) + "\"}]}}\n";
+    }
+
+    if tool_name == "cgroupv2_events" {
+        let target_path: String = extract_json_str(req, "path");
+        let p: String = if chars_len(target_path) > 0 { target_path } else { "/sys/fs/cgroup" };
+        let node: Cgroupv2Node = inspect_cgroup_node(fs, p, p, "/", 0, true);
+        let text: String = "OOM and Population Events for " + node.path + ":\n  OOM Kills: " + to_string(node.oom_kills) + "\n  Active Tasks: " + to_string(node.procs_count) + "\n";
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(text) + "\"}]}}\n";
+    }
+
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n";
+}
+
+pub fn handle_mcp_message(fs: &FsReadCap, req: String) -> String {
+    let id_str: String = extract_json_str(req, "id");
+    let id: String = if chars_len(id_str) > 0 { "\"" + id_str + "\"" } else { "1" };
+    let method: String = extract_json_str(req, "method");
+
+    if method == "initialize" {
+        return render_mcp_init(id);
+    }
+    if method == "tools/list" {
+        return render_mcp_tools_list(id);
+    }
+    if method == "tools/call" {
+        let tool_name: String = extract_json_str(req, "name");
+        return handle_mcp_call(fs, id, tool_name, req);
+    }
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n";
+}
+
+pub fn run_mcp_server(fs: &FsReadCap) {
+    let mut running: Bool = true;
+    while running {
+        let line_res: Result[String, String] = oo_read_stdin_chunk(fs, 8192);
+        if !line_res.is_ok() {
+            running = false;
+        } else {
+            let line: String = match line_res { Ok(s) => s, Err(_) => "" };
+            let trimmed: String = str_trim(line);
+            if chars_len(trimmed) == 0 {
+                running = false;
+            } else {
+                let resp: String = handle_mcp_message(fs, trimmed);
+                if chars_len(resp) > 0 {
+                    print(resp);
+                }
+            }
+        }
+    }
+}

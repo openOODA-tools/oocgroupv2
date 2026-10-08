@@ -1,0 +1,11 @@
+Package: oocgroupv2
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Depends: libc6
+Description: Sovereign CGROUP V2 TREE
+ Visualizes the active cgroup v2 slice hierarchy and resource shares.
+ Pure openOODA utility with zero ambient authority, terminal ergonomics,
+ and native Model Context Protocol (MCP) server.

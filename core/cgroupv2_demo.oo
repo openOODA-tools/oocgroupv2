@@ -1,0 +1,92 @@
+// # cgroup v2 Synthetic Demonstration Fixtures
+//
+// Logline: Constructs realistic synthetic cgroup v2 hierarchies and telemetry for demo and testing.
+//
+// Setup: Generates fully populated slice structures without host filesystem dependencies.
+//
+// Beats:
+//   1. Construct root, system.slice, user.slice, and scope node records.
+//   2. Populate realistic memory, CPU quota, task counts, and weight limits.
+//   3. Synthesize Pressure Stall Information metrics for offline demonstration.
+//   4. Deliver structured node hierarchy for testing and verification.
+
+import "core/cgroupv2_types.oo";
+
+pub fn build_demo_tree() -> List[Cgroupv2Node] {
+    let mut tree: List[Cgroupv2Node] = list_new();
+
+    let mut root: Cgroupv2Node = make_cgroup_node("/", "/sys/fs/cgroup", "", 0, false);
+    root.controllers = "cpuset cpu io memory hugetlb pids rdma misc";
+    root.subtree_control = "cpu memory io pids";
+    root.procs_count = 28;
+    root.mem_current = "12884901888";
+    root.mem_max = "max";
+    tree = list_push(tree, root);
+
+    let mut sys: Cgroupv2Node = make_cgroup_node("system.slice", "/sys/fs/cgroup/system.slice", "/", 1, false);
+    sys.controllers = "cpu memory io pids";
+    sys.subtree_control = "cpu memory pids";
+    sys.procs_count = 84;
+    sys.mem_current = "4294967296";
+    sys.cpu_weight = "200";
+    tree = list_push(tree, sys);
+
+    let mut journal: Cgroupv2Node = make_cgroup_node("systemd-journald.service", "/sys/fs/cgroup/system.slice/systemd-journald.service", "system.slice", 2, false);
+    journal.procs_count = 1;
+    journal.mem_current = "48234496";
+    journal.cpu_weight = "100";
+    tree = list_push(tree, journal);
+
+    let mut sshd: Cgroupv2Node = make_cgroup_node("sshd.service", "/sys/fs/cgroup/system.slice/sshd.service", "system.slice", 2, false);
+    sshd.procs_count = 2;
+    sshd.mem_current = "14680064";
+    sshd.cpu_weight = "100";
+    tree = list_push(tree, sshd);
+
+    let mut docker: Cgroupv2Node = make_cgroup_node("docker.service", "/sys/fs/cgroup/system.slice/docker.service", "system.slice", 2, false);
+    docker.procs_count = 16;
+    docker.mem_current = "734003200";
+    docker.cpu_weight = "250";
+    tree = list_push(tree, docker);
+
+    let mut agent: Cgroupv2Node = make_cgroup_node("openooda-agent.service", "/sys/fs/cgroup/system.slice/openooda-agent.service", "system.slice", 2, true);
+    agent.procs_count = 4;
+    agent.mem_current = "134217728";
+    agent.cpu_weight = "300";
+    tree = list_push(tree, agent);
+
+    let mut usr: Cgroupv2Node = make_cgroup_node("user.slice", "/sys/fs/cgroup/user.slice", "/", 1, false);
+    usr.controllers = "cpu memory io pids";
+    usr.subtree_control = "cpu memory pids";
+    usr.procs_count = 42;
+    usr.mem_current = "2147483648";
+    usr.cpu_weight = "150";
+    tree = list_push(tree, usr);
+
+    let mut u1000: Cgroupv2Node = make_cgroup_node("user-1000.slice", "/sys/fs/cgroup/user.slice/user-1000.slice", "user.slice", 2, false);
+    u1000.procs_count = 36;
+    u1000.mem_current = "1887436800";
+    tree = list_push(tree, u1000);
+
+    let mut sess: Cgroupv2Node = make_cgroup_node("session-1.scope", "/sys/fs/cgroup/user.slice/user-1000.slice/session-1.scope", "user-1000.slice", 3, true);
+    sess.procs_count = 18;
+    sess.mem_current = "629145600";
+    tree = list_push(tree, sess);
+
+    let mut init: Cgroupv2Node = make_cgroup_node("init.scope", "/sys/fs/cgroup/init.scope", "/", 1, true);
+    init.procs_count = 1;
+    init.mem_current = "25165824";
+    tree = list_push(tree, init);
+
+    return tree;
+}
+
+pub fn build_demo_psi(resource: String) -> Cgroupv2Psi {
+    if resource == "cpu" {
+        return make_psi_metric("cpu", "0.08", "0.05", "0.02", "1840291", "0.00", "0.00", "0.00", "0");
+    }
+    if resource == "memory" {
+        return make_psi_metric("memory", "0.00", "0.01", "0.01", "4820", "0.00", "0.00", "0.00", "12");
+    }
+    return make_psi_metric("io", "0.12", "0.08", "0.03", "3901928", "0.10", "0.06", "0.02", "3401920");
+}

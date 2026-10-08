@@ -1,0 +1,70 @@
+// # cgroup v2 Resource Shares and Weights Calculator
+//
+// Logline: Computes proportional CPU and IO weights and sibling allocations in cgroup v2.
+//
+// Setup: Analyzes cpu.weight and io.weight distributions across hierarchical siblings.
+//
+// Beats:
+//   1. Parse weight string specifications into integer weight tokens.
+//   2. Calculate aggregate weight across sibling cgroup scopes.
+//   3. Derive proportional percentage shares for balanced scheduling.
+//   4. Format share records for display and telemetry surfaces.
+
+import "core/cgroupv2_types.oo";
+
+pub fn parse_int_safe(val: String, default_val: Int) -> Int {
+    let trimmed: String = str_trim(val);
+    let n: Int = chars_len(trimmed);
+    if n == 0 { return default_val; }
+    let mut num: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let ch: Int = byte_at(trimmed, i);
+        if ch >= 48 && ch <= 57 {
+            num = (num * 10) + (ch - 48);
+        } else {
+            return default_val;
+        }
+        i = i + 1;
+    }
+    return num;
+}
+
+pub fn calculate_node_shares(nodes: List[Cgroupv2Node]) -> List[Cgroupv2Share] {
+    let count: Int = list_len(nodes);
+    let mut total_weight: Int = 0;
+    let mut weights: List[Int] = list_new();
+
+    let mut i: Int = 0;
+    while i < count {
+        let node: Cgroupv2Node = list_get(nodes, i);
+        let w: Int = parse_int_safe(node.cpu_weight, 100);
+        total_weight = total_weight + w;
+        weights = list_push(weights, w);
+        i = i + 1;
+    }
+
+    if total_weight <= 0 {
+        total_weight = 1;
+    }
+
+    let mut shares: List[Cgroupv2Share] = list_new();
+    let mut j: Int = 0;
+    while j < count {
+        let node_item: Cgroupv2Node = list_get(nodes, j);
+        let cur_weight: Int = list_get(weights, j);
+        let pct_int: Int = (cur_weight * 100) / total_weight;
+        let pct_remainder: Int = ((cur_weight * 1000) / total_weight) - (pct_int * 10);
+        let pct_str: String = to_string(pct_int) + "." + to_string(pct_remainder) + "%";
+
+        let share: Cgroupv2Share = make_share_item(node_item.name, cur_weight, pct_str);
+        shares = list_push(shares, share);
+        j = j + 1;
+    }
+
+    return shares;
+}
+
+pub fn format_share_summary(share: Cgroupv2Share) -> String {
+    return share.name + " -> weight: " + to_string(share.weight) + " (" + share.percent_str + ")";
+}

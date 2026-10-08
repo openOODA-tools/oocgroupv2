@@ -1,0 +1,93 @@
+// # cgroup v2 Command-Line Options Parser
+//
+// Logline: Parses command-line flags and arguments for cgroup v2 tree and telemetry modes.
+//
+// Setup: Inspects POSIX argument lists and populates Cgroupv2Options record.
+//
+// Beats:
+//   1. Parse target cgroup path and slice filters.
+//   2. Parse display modes: shares, PSI telemetry, process counts, and summary.
+//   3. Parse operational flags: demo, JSON, help, version, and MCP server.
+//   4. Deliver structured execution options to dispatcher.
+
+pub type Cgroupv2Options = struct {
+    path: String,
+    slice: String,
+    depth: Int,
+    show_shares: Bool,
+    show_psi: Bool,
+    show_events: Bool,
+    show_procs: Bool,
+    summary: Bool,
+    demo: Bool,
+    json_output: Bool,
+    help: Bool,
+    version: Bool,
+    mcp: Bool
+};
+
+pub fn default_options() -> Cgroupv2Options {
+    return Cgroupv2Options {
+        path: "/sys/fs/cgroup",
+        slice: "",
+        depth: 3,
+        show_shares: false,
+        show_psi: false,
+        show_events: false,
+        show_procs: false,
+        summary: false,
+        demo: false,
+        json_output: false,
+        help: false,
+        version: false,
+        mcp: false
+    };
+}
+
+pub fn parse_options(args: List[String]) -> Cgroupv2Options {
+    let mut opts: Cgroupv2Options = default_options();
+    let n: Int = list_len(args);
+    let mut i: Int = 0;
+
+    while i < n {
+        let arg: String = list_get(args, i);
+        if arg == "-h" || arg == "--help" {
+            opts.help = true;
+        } else if arg == "-v" || arg == "--version" {
+            opts.version = true;
+        } else if arg == "--mcp" {
+            opts.mcp = true;
+        } else if arg == "--demo" {
+            opts.demo = true;
+        } else if arg == "--json" {
+            opts.json_output = true;
+        } else if arg == "--shares" {
+            opts.show_shares = true;
+        } else if arg == "--psi" {
+            opts.show_psi = true;
+        } else if arg == "--events" {
+            opts.show_events = true;
+        } else if arg == "--procs" {
+            opts.show_procs = true;
+        } else if arg == "--summary" {
+            opts.summary = true;
+        } else if (arg == "-p" || arg == "--path") && i + 1 < n {
+            i = i + 1;
+            opts.path = list_get(args, i);
+        } else if (arg == "-s" || arg == "--slice") && i + 1 < n {
+            i = i + 1;
+            opts.slice = list_get(args, i);
+        } else if (arg == "-d" || arg == "--depth") && i + 1 < n {
+            i = i + 1;
+            let d_str: String = list_get(args, i);
+            if d_str == "1" { opts.depth = 1; }
+            else if d_str == "2" { opts.depth = 2; }
+            else if d_str == "4" { opts.depth = 4; }
+            else if d_str == "5" { opts.depth = 5; }
+        } else if !str_starts_with(arg, "-") && chars_len(arg) > 0 {
+            opts.path = arg;
+        }
+        i = i + 1;
+    }
+    return opts;
+}

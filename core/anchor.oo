@@ -1,0 +1,41 @@
+// # cgroup v2 Core Verification Anchor
+//
+// Logline: Invariant verification suite confirming cgroup v2 types, scan, and PSI algorithms.
+//
+// Setup: Exports core subroutines and executes core integrity predicates.
+//
+// Beats:
+//   1. Verify node record construction and attribute integrity.
+//   2. Verify PSI parsing and metric extraction.
+//   3. Verify sibling share and weight distribution calculations.
+//   4. Deliver unified verification status to upper subsystems.
+
+import "core/cgroupv2_types.oo";
+import "core/cgroupv2_psi.oo";
+import "core/cgroupv2_shares.oo";
+import "core/cgroupv2_demo.oo";
+
+pub fn verify_core_subsystem() -> Bool {
+    let node: Cgroupv2Node = make_cgroup_node("test.slice", "/test", "/", 1, false);
+    if node.name != "test.slice" {
+        return false;
+    }
+
+    let psi_line: String = "some avg10=0.05 avg60=0.10 avg300=0.20 total=12345";
+    let val: String = extract_psi_val(psi_line, "avg10");
+    if val != "0.05" {
+        return false;
+    }
+
+    let demo_nodes: List[Cgroupv2Node] = build_demo_tree();
+    if list_len(demo_nodes) < 3 {
+        return false;
+    }
+
+    let shares: List[Cgroupv2Share] = calculate_node_shares(demo_nodes);
+    if list_len(shares) < 3 {
+        return false;
+    }
+
+    return true;
+}
